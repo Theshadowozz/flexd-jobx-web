@@ -43,7 +43,7 @@ backend/
     schemas/         # input/output Pydantic dan tipe bersama
     middlewares/    # exception handler dan konteks request
     utils/          # security, response, error DB, rate limit
-    agents/         # tempat workflow LangGraph; saat ini belum ada workflow bisnis
+    agents/         # graph artifact/JD/matching; belum terhubung endpoint atau worker
   scripts/          # perintah operator eksplisit
   tests/
 ```

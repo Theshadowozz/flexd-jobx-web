@@ -10,7 +10,9 @@ Monorepo JobX: portfolio artifacts, evidence-based skills, and job matching.
 - Explicit CRUD for all 12 existing tables; CRUD is restricted to active admins.
 - Authentication: public registration, login, current user, change password. No refresh/logout.
 - Frontend is a scaffold with a local-only validated form, not an auth/CRUD dashboard.
-- OpenAI-compatible LLM factory only; no `LLM_PROVIDER`. Agents and S3 operations are not yet exposed.
+- OpenAI-compatible LLM factory and dependency-injected LangGraph workflows; no `LLM_PROVIDER`.
+  Workflows are not exposed through API endpoints. Live artifact readers and S3 operations
+  are not implemented.
 
 ## Backend setup
 
@@ -185,8 +187,87 @@ npm run build
 
 Backend flow: routes (HTTP/dependencies), controllers (response), services
 (queries/transactions/rules), models (ORM), schemas (input/output). Shared config and utilities
-contain no dynamic client-selected table/column SQL. `agents/` is reserved for later workflows.
+contain no dynamic client-selected table/column SQL. `agents/` contains isolated AI workflows.
 Frontend folders: assets, components, hooks, lib, schemas, pages, types, redux.
+
+## AI workflow scaffold
+
+Three explicit graph factories live under `backend/app/agents/`:
+
+- `artifact_analysis.graph.build_artifact_analysis_graph`: validate input, ingest artifact,
+  enforce content budgets/secret guard, analyze contribution context, normalize skill aliases,
+  validate exact source citations, and return typed analysis results. Schema/citation failures
+  allow one repair by default (configurable through injected context, maximum two).
+- `job_descriptor.graph.build_job_descriptor_graph`: generate an employer-reviewable draft,
+  resolve skill requirements and validate exact supporting quotes. No approval/publication.
+  Quote validation is not semantic proof: all generated prose still requires employer review.
+- `matching.graph.build_matching_graph`: deterministic Decimal scoring, evidence aggregation,
+  and explanation from known facts. Optional model can only reorder all known fact IDs;
+  invalid output or recognized network/provider failures fall back to a template.
+
+Graph execution does not query/write DB, authorize users, schedule workers, or persist checkpoints.
+Services must supply authorized snapshots, filter visibility, check job expiry, select current
+analysis evidence, and persist results atomically. Do not hold a DB transaction during model I/O.
+Unexpected errors propagate to caller; caller must record safe failure status. This scaffold
+does not provide durable background execution or automatic retry of network failures. The LLM
+client retains existing `LLM_MAX_RETRIES` behavior; graph repairs address output validation only.
+
+### Artifact ingestion
+
+`services/artifact_ingestion/dispatcher.py` selects an injected read-only reader by artifact type.
+All seven types have a contract, **none has a built-in live reader yet**, including GitHub.
+Unregistered types return `unsupported` without a model call. Registered readers must return
+`ArtifactContent`: Markdown, source blocks/locations, revision, media references and limitations.
+No `.md` file is written. Reader implementations must independently enforce source/redirect
+allowlists, MIME checks, file/decompression/time budgets, sensitive-path filtering and secret
+scanning; the graph's regex guard is defense in depth, not a full secret scanner.
+
+Current model path is text-only. Media references are neither fetched nor sent to model;
+image/video need a real OCR/transcription/vision adapter before visual analysis is possible.
+Content without citable text returns `needs_review`, not fabricated evidence.
+Only supplied source blocks may be cited. Unknown/ambiguous skills remain unresolved, never
+create master skill records. One evidence per canonical skill is returned to respect current
+`(analysis_id, skill_id)` uniqueness; first valid citation wins. Empty findings mean no evidence
+found, not that candidate lacks competence. Model confidence is not measured competence.
+
+### Calling a graph (from backend code)
+
+```python
+from app.agents.job_descriptor.graph import build_job_descriptor_graph
+from app.agents.job_descriptor.schemas import JobInput
+from app.agents.shared.context import ModelContext
+from app.agents.shared.structured_output import LangChainStructuredModel
+
+# Construction/import does not call provider. ainvoke below does call configured LLM.
+graph = build_job_descriptor_graph(ModelContext(model=LangChainStructuredModel()))
+# result = await graph.ainvoke({"input": JobInput(business_problem="Build an inventory API")})
+# draft = result["result"]
+```
+
+Adapter uses existing lazy `create_llm()`. Default structured output method is `json_schema`;
+inject `method="function_calling"` or `method="json_mode"` only if endpoint supports it.
+OpenAI-compatible chat does not guarantee structured-output or multimodal support.
+Prompt versions are included in artifact/JD results; calling service must also record actual
+model identity. Never log/store full graph state or raw model messages: these can contain
+private source content, including content rejected by guards. Persist only approved sanitized
+result fields. Artifact `needs_review` maps to analysis `needs_human_review`; `unsupported`
+is a workflow outcome, not a new database enum.
+
+### Experimental matching policy
+
+PRD component weights: required 0.50, preferred 0.20, evidence 0.20, preferences 0.10.
+Absent requirement groups and unknown preferences are excluded and remaining weights normalized.
+At least one requirement is required; requirement IDs must be unique, weights positive.
+Coverage uses eligible evidence presence. Rejected evidence is excluded. Evidence quality uses
+review factors 0.50/0.75/1.00 for ai_suggested/candidate_confirmed/reviewer_verified; inferred
+evidence receives a further factor of 0.60. Best evidence per skill wins, duplicates never add
+coverage. Quality is averaged across requirements by weight; missing evidence contributes zero.
+Available preference factors (0–100, computed by service) are averaged equally.
+Formula version `matching-v1-experimental` is an explicit initial policy, not validated hiring
+prediction or final product configuration. Decisions/swipes are never touched by these graphs.
+
+Offline workflow tests: `uv run pytest tests/test_agent_workflows.py -q` from `backend/`.
+Tests inject fake readers/models; do not call GitHub, paid LLM endpoints, S3 or remote DB.
 
 Dependency note: frontend overrides the ESLint parser's transitive `minimatch` to patched
 11.x because its declared 9.x range is affected by GHSA-g3hv-75wg-m249. Remove the override

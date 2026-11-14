@@ -1,1 +1,1 @@
-"""Reserved for LangGraph workflows. No automatic LLM calls at application startup."""
+"""Explicit, dependency-injected workflows; importing this package performs no I/O."""
