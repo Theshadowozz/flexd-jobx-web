@@ -1,81 +1,35 @@
-from typing import Literal
-
-from sqlalchemy.orm import Session
-
-from app.schemas import job_post as schema
-from app.schemas.job_post import (
-    JobPostCreate,
-    JobPostDetailData,
-    JobPostDetailResponse,
-    JobPostListData,
-    JobPostListResponse,
-    JobPostRead,
-    JobPostUpdate,
-)
-from app.schemas.response import EmptyResponse, Pagination
-from app.services import job_post_service
+from app.schemas.job_post import JobPostRead
+from app.services import job_post_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_job_post(db: Session, payload: JobPostCreate) -> JobPostDetailResponse:
-    job_post = job_post_service.create_job_post(db=db, payload=payload)
-    job_post_data = JobPostRead.model_validate(job_post)
-    return JobPostDetailResponse(
-        message={"success": "Data berhasil dibuat"}, data=JobPostDetailData(job_post=job_post_data)
+async def list_job_posts(db, limit, offset):
+    records, total = await service.list_job_posts(db, limit, offset)
+    return list_response(
+        "Job posts retrieved",
+        "job_posts",
+        [JobPostRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_job_post(db: Session, job_post_id: int) -> JobPostDetailResponse:
-    job_post = job_post_service.get_job_post(db=db, job_post_id=job_post_id)
-    job_post_data = JobPostRead.model_validate(job_post)
-    return JobPostDetailResponse(
-        message={"success": "Data berhasil diambil"}, data=JobPostDetailData(job_post=job_post_data)
-    )
+async def get_job_post(db, record_id):
+    record = await service.get_job_post(db, record_id)
+    return item_response("Job post retrieved", "job_post", JobPostRead.model_validate(record))
 
 
-def update_job_post(db: Session, job_post_id: int, payload: JobPostUpdate) -> JobPostDetailResponse:
-    job_post = job_post_service.update_job_post(db=db, job_post_id=job_post_id, payload=payload)
-    job_post_data = JobPostRead.model_validate(job_post)
-    return JobPostDetailResponse(
-        message={"success": "Data berhasil diperbarui"},
-        data=JobPostDetailData(job_post=job_post_data),
-    )
+async def create_job_post(db, schema):
+    record = await service.create_job_post(db, schema)
+    return item_response("Job post created", "job_post", JobPostRead.model_validate(record))
 
 
-def list_job_posts(
-    db: Session,
-    offset: int,
-    limit: int,
-    user_id: int | None = None,
-    city: str | None = None,
-    province: str | None = None,
-    employment_type: schema.EmploymentType | None = None,
-    work_mode: schema.WorkMode | None = None,
-    approval_status: Literal["draft", "pending_approval", "approved", "rejected"] | None = None,
-    publication_status: Literal["unpublished", "published", "paused", "closed"] | None = None,
-    search: str | None = None,
-) -> JobPostListResponse:
-    records, total = job_post_service.list_job_posts(
-        db=db,
-        offset=offset,
-        limit=limit,
-        user_id=user_id,
-        city=city,
-        province=province,
-        employment_type=employment_type,
-        work_mode=work_mode,
-        approval_status=approval_status,
-        publication_status=publication_status,
-        search=search,
-    )
-    items = [JobPostRead.model_validate(record) for record in records]
-    return JobPostListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=JobPostListData(
-            job_posts=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
-    )
+async def update_job_post(db, record_id, schema):
+    record = await service.update_job_post(db, record_id, schema)
+    return item_response("Job post updated", "job_post", JobPostRead.model_validate(record))
 
 
-def delete_job_post(db: Session, job_post_id: int) -> EmptyResponse:
-    job_post_service.delete_job_post(db=db, job_post_id=job_post_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_job_post(db, record_id):
+    await service.delete_job_post(db, record_id)
+    return empty_response("Job post deleted")

@@ -1,24 +1,14 @@
-import assert from 'node:assert/strict'
-import test from 'node:test'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { apiResponseSchema } from '../src/schemas/response'
 
-import { apiResponseSchema } from '../src/schemas/response.ts'
-
-test('accepts entity response without legacy object wrapper', () => {
-  const schema = apiResponseSchema(z.object({ skills: z.array(z.object({ id: z.number() })) }))
-  assert.deepEqual(schema.parse({ message: { success: 'OK' }, error: {}, data: { skills: [] } }).data,
-    { skills: [] })
-})
-
-test('accepts categorized errors and empty data', () => {
-  const schema = apiResponseSchema(z.object({}))
-  const body = schema.parse({ message: { error: 'Invalid' },
-    error: { validation: { name: 'Required' } }, data: {} })
-  assert.equal(body.error.validation.name, 'Required')
-})
-
-test('rejects old flat error contract', () => {
-  assert.equal(apiResponseSchema(z.object({})).safeParse({
-    message: {}, error: { name: 'Required' }, data: {},
-  }).success, false)
+describe('resource response contract', () => {
+  it('accepts only singular data for details', () => {
+    const schema = apiResponseSchema(z.object({ skill_alias: z.object({ id: z.string() }) }).strict())
+    expect(schema.parse({ message: { success: 'Retrieved' }, error: {}, data: { skill_alias: { id: '12' } } }).data.skill_alias.id).toBe('12')
+  })
+  it('rejects numeric BIGINT IDs', () => {
+    const schema = apiResponseSchema(z.object({ skill_alias: z.object({ id: z.string() }) }))
+    expect(schema.safeParse({ message: {}, error: {}, data: { skill_alias: { id: 12 } } }).success).toBe(false)
+  })
 })

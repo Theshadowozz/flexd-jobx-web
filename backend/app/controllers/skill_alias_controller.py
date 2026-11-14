@@ -1,64 +1,41 @@
-from sqlalchemy.orm import Session
-
-from app.schemas.response import EmptyResponse, Pagination
-from app.schemas.skill_alias import (
-    SkillAliasCreate,
-    SkillAliasDetailData,
-    SkillAliasDetailResponse,
-    SkillAliasListData,
-    SkillAliasListResponse,
-    SkillAliasRead,
-    SkillAliasUpdate,
-)
-from app.services import skill_alias_service
+from app.schemas.skill_alias import SkillAliasRead
+from app.services import skill_alias_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_skill_alias(db: Session, payload: SkillAliasCreate) -> SkillAliasDetailResponse:
-    skill_alias = skill_alias_service.create_skill_alias(db=db, payload=payload)
-    skill_alias_data = SkillAliasRead.model_validate(skill_alias)
-    return SkillAliasDetailResponse(
-        message={"success": "Data berhasil dibuat"},
-        data=SkillAliasDetailData(skill_alias=skill_alias_data),
+async def list_skill_aliases(db, limit, offset):
+    records, total = await service.list_skill_aliases(db, limit, offset)
+    return list_response(
+        "Skill aliases retrieved",
+        "skill_aliases",
+        [SkillAliasRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_skill_alias(db: Session, skill_alias_id: int) -> SkillAliasDetailResponse:
-    skill_alias = skill_alias_service.get_skill_alias(db=db, skill_alias_id=skill_alias_id)
-    skill_alias_data = SkillAliasRead.model_validate(skill_alias)
-    return SkillAliasDetailResponse(
-        message={"success": "Data berhasil diambil"},
-        data=SkillAliasDetailData(skill_alias=skill_alias_data),
+async def get_skill_alias(db, record_id):
+    record = await service.get_skill_alias(db, record_id)
+    return item_response(
+        "Skill alias retrieved", "skill_alias", SkillAliasRead.model_validate(record)
     )
 
 
-def update_skill_alias(
-    db: Session, skill_alias_id: int, payload: SkillAliasUpdate
-) -> SkillAliasDetailResponse:
-    skill_alias = skill_alias_service.update_skill_alias(
-        db=db, skill_alias_id=skill_alias_id, payload=payload
-    )
-    skill_alias_data = SkillAliasRead.model_validate(skill_alias)
-    return SkillAliasDetailResponse(
-        message={"success": "Data berhasil diperbarui"},
-        data=SkillAliasDetailData(skill_alias=skill_alias_data),
+async def create_skill_alias(db, schema):
+    record = await service.create_skill_alias(db, schema)
+    return item_response(
+        "Skill alias created", "skill_alias", SkillAliasRead.model_validate(record)
     )
 
 
-def list_skill_aliases(
-    db: Session, offset: int, limit: int, skill_id: int | None = None, search: str | None = None
-) -> SkillAliasListResponse:
-    records, total = skill_alias_service.list_skill_aliases(
-        db=db, offset=offset, limit=limit, skill_id=skill_id, search=search
-    )
-    items = [SkillAliasRead.model_validate(record) for record in records]
-    return SkillAliasListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=SkillAliasListData(
-            skill_aliases=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
+async def update_skill_alias(db, record_id, schema):
+    record = await service.update_skill_alias(db, record_id, schema)
+    return item_response(
+        "Skill alias updated", "skill_alias", SkillAliasRead.model_validate(record)
     )
 
 
-def delete_skill_alias(db: Session, skill_alias_id: int) -> EmptyResponse:
-    skill_alias_service.delete_skill_alias(db=db, skill_alias_id=skill_alias_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_skill_alias(db, record_id):
+    await service.delete_skill_alias(db, record_id)
+    return empty_response("Skill alias deleted")

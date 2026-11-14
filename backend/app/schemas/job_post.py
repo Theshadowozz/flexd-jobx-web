@@ -1,60 +1,74 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field
 
-from app.schemas.common import Input, Patch, Read, Timestamps
-from app.schemas.response import ApiResponse, Pagination
+from app.schemas.common import Input, Patch, Timestamps, UnsignedAmount, UnsignedId
 
-EmploymentType = Literal["full_time", "part_time", "contract", "internship", "freelance"]
+Employment = Literal["full_time", "part_time", "contract", "internship", "freelance"]
 WorkMode = Literal["onsite", "hybrid", "remote"]
+Approval = Literal["draft", "pending_approval", "approved", "rejected"]
+Publication = Literal["unpublished", "published", "paused", "closed"]
 
 
-class JobPostFields(Input):
+class JobPostCreate(Input):
+    user_id: UnsignedId
     title: str = Field(min_length=1, max_length=200)
-    business_problem: str = Field(min_length=1, max_length=16000)
-    job_summary: str | None = Field(default=None, max_length=16000)
-    job_description: str | None = Field(default=None, max_length=1000000)
-    employment_type: EmploymentType
+    business_problem: str = Field(min_length=1)
+    job_summary: str | None = None
+    job_description: str | None = None
+    employment_type: Employment
     work_mode: WorkMode
     city: str | None = Field(default=None, max_length=120)
     province: str | None = Field(default=None, max_length=120)
     country: str = Field(default="Indonesia", min_length=1, max_length=100)
-    salary_min: int | None = Field(default=None, ge=0, le=18446744073709551615)
-    salary_max: int | None = Field(default=None, ge=0, le=18446744073709551615)
+    salary_min: UnsignedAmount | None = None
+    salary_max: UnsignedAmount | None = None
     currency: str = Field(default="IDR", pattern=r"^[A-Z]{3}$")
-    ai_generation_metadata: JsonValue = None
-    approval_status: Literal["draft", "pending_approval", "approved", "rejected"] = "draft"
-    publication_status: Literal["unpublished", "published", "paused", "closed"] = "unpublished"
+    ai_generation_metadata: dict[str, Any] | None = None
+    approval_status: Approval = "draft"
+    publication_status: Publication = "unpublished"
+    published_at: datetime | None = None
     closes_at: datetime | None = None
 
 
-class JobPostCreate(JobPostFields):
-    user_id: int = Field(gt=0, le=18446744073709551615)
-
-
-class JobPostUpdate(JobPostFields, Patch):
+class JobPostUpdate(Patch):
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    business_problem: str | None = Field(default=None, min_length=1, max_length=16000)
-    employment_type: EmploymentType | None = None
+    business_problem: str | None = Field(default=None, min_length=1)
+    job_summary: str | None = None
+    job_description: str | None = None
+    employment_type: Employment | None = None
     work_mode: WorkMode | None = None
+    city: str | None = Field(default=None, max_length=120)
+    province: str | None = Field(default=None, max_length=120)
+    country: str | None = Field(default=None, min_length=1, max_length=100)
+    salary_min: UnsignedAmount | None = None
+    salary_max: UnsignedAmount | None = None
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    ai_generation_metadata: dict[str, Any] | None = None
+    approval_status: Approval | None = None
+    publication_status: Publication | None = None
+    published_at: datetime | None = None
+    closes_at: datetime | None = None
 
 
-class JobPostRead(JobPostFields, Timestamps):
-    model_config = {"from_attributes": True}
-    id: int
-    user_id: int
+class JobPostRead(Timestamps):
+    id: UnsignedId
+    user_id: UnsignedId
+    title: str
+    business_problem: str
+    job_summary: str | None
+    job_description: str | None
+    employment_type: str
+    work_mode: str
+    city: str | None
+    province: str | None
+    country: str
+    salary_min: UnsignedAmount | None
+    salary_max: UnsignedAmount | None
+    currency: str
+    ai_generation_metadata: dict[str, Any] | None
+    approval_status: str
+    publication_status: str
     published_at: datetime | None
-
-
-class JobPostDetailData(Read):
-    job_post: JobPostRead
-
-
-class JobPostListData(Read):
-    job_posts: list[JobPostRead]
-    pagination: Pagination
-
-
-JobPostDetailResponse = ApiResponse[JobPostDetailData]
-JobPostListResponse = ApiResponse[JobPostListData]
+    closes_at: datetime | None

@@ -1,81 +1,47 @@
-from sqlalchemy.orm import Session
-
-from app.schemas import artifact_analysis as schema
-from app.schemas.artifact_analysis import (
-    ArtifactAnalysisCreate,
-    ArtifactAnalysisDetailData,
-    ArtifactAnalysisDetailResponse,
-    ArtifactAnalysisListData,
-    ArtifactAnalysisListResponse,
-    ArtifactAnalysisRead,
-    ArtifactAnalysisUpdate,
-)
-from app.schemas.response import EmptyResponse, Pagination
-from app.services import artifact_analysis_service
+from app.schemas.artifact_analysis import ArtifactAnalysisRead
+from app.services import artifact_analysis_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_artifact_analysis(
-    db: Session, payload: ArtifactAnalysisCreate
-) -> ArtifactAnalysisDetailResponse:
-    artifact_analysis = artifact_analysis_service.create_artifact_analysis(db=db, payload=payload)
-    artifact_analysis_data = ArtifactAnalysisRead.model_validate(artifact_analysis)
-    return ArtifactAnalysisDetailResponse(
-        message={"success": "Data berhasil dibuat"},
-        data=ArtifactAnalysisDetailData(artifact_analysis=artifact_analysis_data),
+async def list_artifact_analyses(db, limit, offset):
+    records, total = await service.list_artifact_analyses(db, limit, offset)
+    return list_response(
+        "Artifact analyses retrieved",
+        "artifact_analyses",
+        [ArtifactAnalysisRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_artifact_analysis(db: Session, artifact_analysis_id: int) -> ArtifactAnalysisDetailResponse:
-    artifact_analysis = artifact_analysis_service.get_artifact_analysis(
-        db=db, artifact_analysis_id=artifact_analysis_id
-    )
-    artifact_analysis_data = ArtifactAnalysisRead.model_validate(artifact_analysis)
-    return ArtifactAnalysisDetailResponse(
-        message={"success": "Data berhasil diambil"},
-        data=ArtifactAnalysisDetailData(artifact_analysis=artifact_analysis_data),
+async def get_artifact_analysis(db, record_id):
+    record = await service.get_artifact_analysis(db, record_id)
+    return item_response(
+        "Artifact analysis retrieved",
+        "artifact_analysis",
+        ArtifactAnalysisRead.model_validate(record),
     )
 
 
-def update_artifact_analysis(
-    db: Session, artifact_analysis_id: int, payload: ArtifactAnalysisUpdate
-) -> ArtifactAnalysisDetailResponse:
-    artifact_analysis = artifact_analysis_service.update_artifact_analysis(
-        db=db, artifact_analysis_id=artifact_analysis_id, payload=payload
-    )
-    artifact_analysis_data = ArtifactAnalysisRead.model_validate(artifact_analysis)
-    return ArtifactAnalysisDetailResponse(
-        message={"success": "Data berhasil diperbarui"},
-        data=ArtifactAnalysisDetailData(artifact_analysis=artifact_analysis_data),
+async def create_artifact_analysis(db, schema):
+    record = await service.create_artifact_analysis(db, schema)
+    return item_response(
+        "Artifact analysis created",
+        "artifact_analysis",
+        ArtifactAnalysisRead.model_validate(record),
     )
 
 
-def list_artifact_analyses(
-    db: Session,
-    offset: int,
-    limit: int,
-    artifact_id: int | None = None,
-    analysis_status: schema.AnalysisStatus | None = None,
-    reviewed_by_user_id: int | None = None,
-) -> ArtifactAnalysisListResponse:
-    records, total = artifact_analysis_service.list_artifact_analyses(
-        db=db,
-        offset=offset,
-        limit=limit,
-        artifact_id=artifact_id,
-        analysis_status=analysis_status,
-        reviewed_by_user_id=reviewed_by_user_id,
-    )
-    items = [ArtifactAnalysisRead.model_validate(record) for record in records]
-    return ArtifactAnalysisListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=ArtifactAnalysisListData(
-            artifact_analyses=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
+async def update_artifact_analysis(db, record_id, schema):
+    record = await service.update_artifact_analysis(db, record_id, schema)
+    return item_response(
+        "Artifact analysis updated",
+        "artifact_analysis",
+        ArtifactAnalysisRead.model_validate(record),
     )
 
 
-def delete_artifact_analysis(db: Session, artifact_analysis_id: int) -> EmptyResponse:
-    artifact_analysis_service.delete_artifact_analysis(
-        db=db, artifact_analysis_id=artifact_analysis_id
-    )
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_artifact_analysis(db, record_id):
+    await service.delete_artifact_analysis(db, record_id)
+    return empty_response("Artifact analysis deleted")

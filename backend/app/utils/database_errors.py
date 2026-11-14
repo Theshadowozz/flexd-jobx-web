@@ -1,26 +1,14 @@
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError
 
 from app.utils.exceptions import AppError
 
 
-def translate_database_error(exc, entity: str):
-    code = exc.orig.args[0] if exc.orig.args else None
-    if isinstance(exc, IntegrityError):
-        if code in (1062, 1451) or "UNIQUE constraint failed" in str(exc.orig):
-            raise AppError(
-                409, "conflict", {entity: "Data duplikat atau masih digunakan data lain"}
-            ) from exc
-        if code in (1452, 3819, 4025) or "constraint failed" in str(exc.orig):
-            raise AppError(
-                422, "validation", {entity: "Referensi atau nilai data tidak valid"}
-            ) from exc
-    if isinstance(exc, OperationalError):
-        if code in (1205, 1213):
-            raise AppError(
-                409, "conflict", {entity: "Perubahan bersamaan; ulangi request"}
-            ) from exc
-        if code in (2002, 2003, 2006, 2013):
-            raise AppError(
-                503, "service_unavailable", {"database": "Database tidak tersedia"}
-            ) from exc
-    raise exc
+def translate_database_error(exc: DBAPIError, entity: str) -> AppError:
+    code = exc.orig.args[0] if exc.orig and exc.orig.args else None
+    if code == 1062 or "UNIQUE constraint failed" in str(exc.orig):
+        return AppError(409, "Resource conflict", {entity: "Unique value already exists"})
+    if code in (1451, 1452) or "FOREIGN KEY constraint failed" in str(exc.orig):
+        return AppError(409, "Resource conflict", {entity: "Related data prevents this operation"})
+    if code in (3819, 1264, 1406, 1048) or "CHECK constraint failed" in str(exc.orig):
+        return AppError(422, "Validation failed", {entity: "Database constraint violated"})
+    return AppError(500, "Internal server error", {"server": "Unable to process request"})

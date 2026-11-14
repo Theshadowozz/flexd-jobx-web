@@ -1,269 +1,120 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CandidateProfile, CompanyProfile, JobMatch, JobPost, User
-from app.schemas.user import AccountStatus, AccountType, UserCreate, UserUpdate
+from app.schemas.user import UserCreate, UserUpdate
+from app.services.validation import reject_nulls
 from app.utils.database_errors import translate_database_error
 from app.utils.exceptions import AppError
 from app.utils.security import hash_password
 
 
-def lock_user_accounts(db: Session) -> None:
-    db.scalars(
+async def list_users(db: AsyncSession, limit: int, offset: int):
+    records = await db.scalars(select(User).order_by(User.id).limit(limit).offset(offset))
+    return list(records), await db.scalar(select(func.count()).select_from(User))
+
+
+async def get_user(db: AsyncSession, record_id: int):
+    record = await db.get(User, record_id)
+    if record is None:
+        raise AppError(404, "User not found", {"user": "Record does not exist"})
+    return record
+
+
+async def lock_users(db: AsyncSession) -> dict[int, User]:
+    # Consistent lock order protects concurrent last-admin changes.
+    records = await db.scalars(
         select(User).order_by(User.id).with_for_update().execution_options(populate_existing=True)
-    ).all()
-
-
-def ensure_active_admin_remains(
-    db: Session, record: User, values: dict[str, object] | None = None
-) -> None:
-    if record.account_type != "admin" or record.account_status != "active":
-        return
-    if (
-        values
-        and values.get("account_type") == "admin"
-        and (values.get("account_status") == "active")
-    ):
-        return
-    count = db.scalar(
-        select(func.count())
-        .select_from(User)
-        .where(User.account_type == "admin", User.account_status == "active")
     )
-    if count <= 1:
-        raise AppError(409, "business_rule", {"user": "Admin aktif terakhir harus dipertahankan"})
+    return {user.id: user for user in records}
 
 
-def get_user(db: Session, user_id: int) -> User:
-    statement = select(User).where(User.id == user_id)
-    user = db.scalar(statement)
-    if user is None:
-        raise AppError(
-            status_code=404, category="not_found", errors={"user": "Data tidak ditemukan"}
+def protect_last_admin(users: dict[int, User], record: User):
+    if record.account_type == "admin" and record.account_status == "active":
+        active = sum(
+            u.account_type == "admin" and u.account_status == "active" for u in users.values()
         )
-    return user
+        if active <= 1:
+            raise AppError(409, "Resource conflict", {"user": "Last active admin must be retained"})
 
 
-def list_users(
-    db: Session,
-    offset: int,
-    limit: int,
-    account_type: AccountType | None = None,
-    account_status: AccountStatus | None = None,
-    search: str | None = None,
-) -> tuple[list[User], int]:
-    conditions = []
-    if account_type is not None:
-        conditions.append(User.account_type == account_type)
-    if account_status is not None:
-        conditions.append(User.account_status == account_status)
-    if search:
-        conditions.append(
-            or_(
-                User.name.contains(search, autoescape=True),
-                User.email.contains(search, autoescape=True),
-            )
-        )
-    total_statement = select(func.count()).select_from(User).where(*conditions)
-    total = db.scalar(total_statement) or 0
-    statement = select(User).where(*conditions).order_by(User.id).offset(offset).limit(limit)
-    records = list(db.scalars(statement).all())
-    return (records, total)
-
-
-def create_user(db: Session, payload: UserCreate) -> User:
+async def create_user(db: AsyncSession, schema: UserCreate):
     try:
-        lock_user_accounts(db)
-        record = None
-        values = {
-            "name": payload.name,
-            "email": payload.email,
-            "account_type": payload.account_type,
-            "account_status": payload.account_status,
-        }
-        payload.model_dump()
-        if values["name"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"name": "Field tidak boleh null"},
-            )
-        if values["email"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"email": "Field tidak boleh null"},
-            )
-        if values["account_type"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"account_type": "Field tidak boleh null"},
-            )
-        if values["account_status"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"account_status": "Field tidak boleh null"},
-            )
-        if record is not None and values["account_type"] != record.account_type:
-            relations = (
-                (CandidateProfile, CandidateProfile.user_id),
-                (CompanyProfile, CompanyProfile.user_id),
-                (JobPost, JobPost.user_id),
-                (JobMatch, JobMatch.candidate_user_id),
-            )
-            if any(
-                (
-                    db.scalar(select(column).where(column == record.id).limit(1)) is not None
-                    for _, column in relations
-                )
-            ):
-                raise AppError(
-                    409,
-                    "business_rule",
-                    {"account_type": "Akun masih memiliki data sesuai role lama"},
-                )
-        record = User(
-            name=values["name"],
-            email=values["email"],
-            password_hash=hash_password(payload.password.get_secret_value()),
-            account_type=values["account_type"],
-            account_status=values["account_status"],
-        )
+        values = schema.model_dump(exclude={"password"})
+        values["email"] = str(schema.email).lower()
+        values["password_hash"] = hash_password(schema.password)
+        record = User(**values)
         db.add(record)
-        db.flush()
-        db.refresh(record)
-        db.commit()
+        await db.flush()
+        await db.refresh(record)
+        await db.commit()
         return record
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "user")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "user") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
 
-def update_user(db: Session, user_id: int, payload: UserUpdate) -> User:
+async def update_user(db: AsyncSession, record_id: int, schema: UserUpdate):
     try:
-        lock_user_accounts(db)
-        statement = (
-            select(User)
-            .where(User.id == user_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        record = db.scalar(statement)
+        users = await lock_users(db)
+        record = users.get(record_id)
         if record is None:
-            raise AppError(
-                status_code=404, category="not_found", errors={"user": "Data tidak ditemukan"}
+            raise AppError(404, "User not found", {"user": "Record does not exist"})
+        values = schema.model_dump(exclude_unset=True)
+        reject_nulls(values, "name", "email", "password", "account_type", "account_status")
+        role = values.get("account_type", record.account_type)
+        status = values.get("account_status", record.account_status)
+        if role != "admin" or status != "active":
+            protect_last_admin(users, record)
+        if role != record.account_type:
+            candidate = await db.get(CandidateProfile, record.id)
+            company = await db.scalar(
+                select(CompanyProfile.id).where(CompanyProfile.user_id == record.id)
             )
-        values = {
-            "name": payload.name if "name" in payload.model_fields_set else record.name,
-            "email": payload.email if "email" in payload.model_fields_set else record.email,
-            "account_type": payload.account_type
-            if "account_type" in payload.model_fields_set
-            else record.account_type,
-            "account_status": payload.account_status
-            if "account_status" in payload.model_fields_set
-            else record.account_status,
-        }
-        ensure_active_admin_remains(db, record, values)
-        payload.model_dump(exclude_unset=True)
-        if values["name"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"name": "Field tidak boleh null"},
+            jobs = await db.scalar(select(JobPost.id).where(JobPost.user_id == record.id).limit(1))
+            matches = await db.scalar(
+                select(JobMatch.id).where(JobMatch.candidate_user_id == record.id).limit(1)
             )
-        if values["email"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"email": "Field tidak boleh null"},
-            )
-        if values["account_type"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"account_type": "Field tidak boleh null"},
-            )
-        if values["account_status"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"account_status": "Field tidak boleh null"},
-            )
-        if record is not None and values["account_type"] != record.account_type:
-            relations = (
-                (CandidateProfile, CandidateProfile.user_id),
-                (CompanyProfile, CompanyProfile.user_id),
-                (JobPost, JobPost.user_id),
-                (JobMatch, JobMatch.candidate_user_id),
-            )
-            if any(
-                (
-                    db.scalar(select(column).where(column == record.id).limit(1)) is not None
-                    for _, column in relations
-                )
-            ):
+            if any(value is not None for value in (candidate, company, jobs, matches)):
                 raise AppError(
                     409,
-                    "business_rule",
-                    {"account_type": "Akun masih memiliki data sesuai role lama"},
+                    "Resource conflict",
+                    {"account_type": "Remove role-specific data before changing role"},
                 )
-        if "name" in payload.model_fields_set:
-            record.name = values["name"]
-        if "email" in payload.model_fields_set:
-            record.email = values["email"]
-        if "account_type" in payload.model_fields_set:
-            record.account_type = values["account_type"]
-        if "account_status" in payload.model_fields_set:
-            record.account_status = values["account_status"]
-        db.flush()
-        db.refresh(record)
-        db.commit()
+        if "email" in values:
+            values["email"] = str(values["email"]).lower()
+        if "password" in values:
+            values["password_hash"] = hash_password(values.pop("password"))
+        for field, value in values.items():
+            setattr(record, field, value)
+        await db.flush()
+        await db.refresh(record)
+        await db.commit()
         return record
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "user")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "user") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
 
-def delete_user(db: Session, user_id: int) -> None:
+async def delete_user(db: AsyncSession, record_id: int):
     try:
-        lock_user_accounts(db)
-        statement = (
-            select(User)
-            .where(User.id == user_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        record = db.scalar(statement)
+        users = await lock_users(db)
+        record = users.get(record_id)
         if record is None:
-            raise AppError(
-                status_code=404, category="not_found", errors={"user": "Data tidak ditemukan"}
-            )
-        ensure_active_admin_remains(db, record)
-        db.delete(record)
-        db.commit()
+            raise AppError(404, "User not found", {"user": "Record does not exist"})
+        protect_last_admin(users, record)
+        await db.delete(record)
+        await db.commit()
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "user")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "user") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise

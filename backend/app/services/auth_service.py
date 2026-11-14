@@ -1,70 +1,67 @@
-from collections import OrderedDict
-from threading import Lock
-from time import monotonic
-
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
+from app.schemas.auth import ChangePassword, Login, Register
+from app.utils.database_errors import translate_database_error
 from app.utils.exceptions import AppError
-from app.utils.security import create_token, hash_password, hasher, verify_password
-
-_attempts = OrderedDict()
-_lock = Lock()
-_dummy = hash_password("not-a-real-account-password")
+from app.utils.security import create_access_token, dummy_hash, hash_password, verify_password
 
 
-def check_rate_limit(client_ip):
-    # Per-process bound; deployment must enforce a shared limit across workers.
-    now = monotonic()
-    with _lock:
-        for key in list(_attempts):
-            if _attempts[key][0] <= now - 60:
-                del _attempts[key]
-        start, count = _attempts.get(client_ip, (now, 0))
-        if count >= 10:
+async def register(db: AsyncSession, schema: Register) -> User:
+    try:
+        user = User(
+            name=schema.name.strip(),
+            email=str(schema.email).lower(),
+            password_hash=hash_password(schema.password),
+            account_type=schema.account_type,
+            account_status="active",
+        )
+        db.add(user)
+        await db.flush()
+        await db.refresh(user)
+        await db.commit()
+        return user
+    except DBAPIError as exc:
+        await db.rollback()
+        raise translate_database_error(exc, "user") from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def login(db: AsyncSession, schema: Login) -> tuple[User, str]:
+    user = await db.scalar(select(User).where(User.email == str(schema.email).lower()))
+    valid = verify_password(schema.password, user.password_hash if user else dummy_hash())
+    if user is None or not valid or user.account_status != "active":
+        raise AppError(401, "Authentication failed", {"auth": "Invalid email or password"})
+    return user, create_access_token(user.id)
+
+
+async def change_password(db: AsyncSession, user_id: int, schema: ChangePassword):
+    try:
+        user = await db.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if user is None or user.account_status != "active":
+            raise AppError(401, "Authentication failed", {"auth": "Account is unavailable"})
+        if not verify_password(schema.current_password, user.password_hash):
             raise AppError(
-                429,
-                "rate_limit",
-                {"login": "Terlalu banyak percobaan login"},
-                headers={"Retry-After": str(max(1, int(60 - now + start)))},
+                422, "Validation failed", {"current_password": "Password does not match"}
             )
-        _attempts[client_ip] = (start, count + 1)
-        if len(_attempts) > 10000:
-            _attempts.popitem(last=False)
-
-
-def login(db, payload):
-    user = db.scalar(select(User).where(User.email == str(payload.email)).with_for_update())
-    valid = verify_password(
-        payload.password.get_secret_value(), user.password_hash if user else _dummy
-    )
-    if not valid or user is None or user.account_status != "active":
-        raise AppError(
-            401,
-            "authentication",
-            {"credentials": "Email atau password salah"},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    token = create_token(user.id)
-    if hasher.check_needs_rehash(user.password_hash):
-        user.password_hash = hash_password(payload.password.get_secret_value())
-        db.commit()
-    return user, token
-
-
-def change_password(db, user, payload):
-    user = db.scalar(
-        select(User)
-        .where(User.id == user.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if not verify_password(payload.current_password.get_secret_value(), user.password_hash):
-        raise AppError(
-            401,
-            "authentication",
-            {"credentials": "Password lama tidak sesuai"},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    user.password_hash = hash_password(payload.new_password.get_secret_value())
-    db.commit()
+        if schema.current_password == schema.new_password:
+            raise AppError(
+                422, "Validation failed", {"new_password": "Choose a different password"}
+            )
+        user.password_hash = hash_password(schema.new_password)
+        await db.commit()
+    except DBAPIError as exc:
+        await db.rollback()
+        raise translate_database_error(exc, "user") from exc
+    except Exception:
+        await db.rollback()
+        raise

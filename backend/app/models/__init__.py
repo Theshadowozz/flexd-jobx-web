@@ -2,6 +2,7 @@ from app.models.artifact import Artifact
 from app.models.artifact_analysis import ArtifactAnalysis
 from app.models.artifact_contribution import ArtifactContribution
 from app.models.artifact_skill_evidence import ArtifactSkillEvidence
+from app.models.base import Base
 from app.models.candidate_profile import CandidateProfile
 from app.models.company_profile import CompanyProfile
 from app.models.job_match import JobMatch
@@ -12,16 +13,17 @@ from app.models.skill_alias import SkillAlias
 from app.models.user import User
 
 __all__ = [
+    "Base",
+    "User",
+    "CandidateProfile",
+    "CompanyProfile",
     "Artifact",
     "ArtifactAnalysis",
     "ArtifactContribution",
     "ArtifactSkillEvidence",
-    "CandidateProfile",
-    "CompanyProfile",
-    "JobMatch",
-    "JobPost",
-    "JobSkillRequirement",
     "Skill",
     "SkillAlias",
-    "User",
+    "JobPost",
+    "JobSkillRequirement",
+    "JobMatch",
 ]

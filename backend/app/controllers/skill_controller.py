@@ -1,67 +1,35 @@
-from sqlalchemy.orm import Session
-
-from app.schemas.response import EmptyResponse, Pagination
-from app.schemas.skill import (
-    SkillCreate,
-    SkillDetailData,
-    SkillDetailResponse,
-    SkillListData,
-    SkillListResponse,
-    SkillRead,
-    SkillUpdate,
-)
-from app.services import skill_service
+from app.schemas.skill import SkillRead
+from app.services import skill_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_skill(db: Session, payload: SkillCreate) -> SkillDetailResponse:
-    skill = skill_service.create_skill(db=db, payload=payload)
-    skill_data = SkillRead.model_validate(skill)
-    return SkillDetailResponse(
-        message={"success": "Data berhasil dibuat"}, data=SkillDetailData(skill=skill_data)
+async def list_skills(db, limit, offset):
+    records, total = await service.list_skills(db, limit, offset)
+    return list_response(
+        "Skills retrieved",
+        "skills",
+        [SkillRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_skill(db: Session, skill_id: int) -> SkillDetailResponse:
-    skill = skill_service.get_skill(db=db, skill_id=skill_id)
-    skill_data = SkillRead.model_validate(skill)
-    return SkillDetailResponse(
-        message={"success": "Data berhasil diambil"}, data=SkillDetailData(skill=skill_data)
-    )
+async def get_skill(db, record_id):
+    record = await service.get_skill(db, record_id)
+    return item_response("Skill retrieved", "skill", SkillRead.model_validate(record))
 
 
-def update_skill(db: Session, skill_id: int, payload: SkillUpdate) -> SkillDetailResponse:
-    skill = skill_service.update_skill(db=db, skill_id=skill_id, payload=payload)
-    skill_data = SkillRead.model_validate(skill)
-    return SkillDetailResponse(
-        message={"success": "Data berhasil diperbarui"}, data=SkillDetailData(skill=skill_data)
-    )
+async def create_skill(db, schema):
+    record = await service.create_skill(db, schema)
+    return item_response("Skill created", "skill", SkillRead.model_validate(record))
 
 
-def list_skills(
-    db: Session,
-    offset: int,
-    limit: int,
-    category: str | None = None,
-    parent_skill_id: int | None = None,
-    search: str | None = None,
-) -> SkillListResponse:
-    records, total = skill_service.list_skills(
-        db=db,
-        offset=offset,
-        limit=limit,
-        category=category,
-        parent_skill_id=parent_skill_id,
-        search=search,
-    )
-    items = [SkillRead.model_validate(record) for record in records]
-    return SkillListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=SkillListData(
-            skills=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
-    )
+async def update_skill(db, record_id, schema):
+    record = await service.update_skill(db, record_id, schema)
+    return item_response("Skill updated", "skill", SkillRead.model_validate(record))
 
 
-def delete_skill(db: Session, skill_id: int) -> EmptyResponse:
-    skill_service.delete_skill(db=db, skill_id=skill_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_skill(db, record_id):
+    await service.delete_skill(db, record_id)
+    return empty_response("Skill deleted")

@@ -1,81 +1,47 @@
-from sqlalchemy.orm import Session
-
-from app.schemas import candidate_profile as schema
-from app.schemas.candidate_profile import (
-    CandidateProfileCreate,
-    CandidateProfileDetailData,
-    CandidateProfileDetailResponse,
-    CandidateProfileListData,
-    CandidateProfileListResponse,
-    CandidateProfileRead,
-    CandidateProfileUpdate,
-)
-from app.schemas.response import EmptyResponse, Pagination
-from app.services import candidate_profile_service
+from app.schemas.candidate_profile import CandidateProfileRead
+from app.services import candidate_profile_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_candidate_profile(
-    db: Session, payload: CandidateProfileCreate
-) -> CandidateProfileDetailResponse:
-    candidate_profile = candidate_profile_service.create_candidate_profile(db=db, payload=payload)
-    candidate_profile_data = CandidateProfileRead.model_validate(candidate_profile)
-    return CandidateProfileDetailResponse(
-        message={"success": "Data berhasil dibuat"},
-        data=CandidateProfileDetailData(candidate_profile=candidate_profile_data),
+async def list_candidate_profiles(db, limit, offset):
+    records, total = await service.list_candidate_profiles(db, limit, offset)
+    return list_response(
+        "Candidate profiles retrieved",
+        "candidate_profiles",
+        [CandidateProfileRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_candidate_profile(db: Session, user_id: int) -> CandidateProfileDetailResponse:
-    candidate_profile = candidate_profile_service.get_candidate_profile(db=db, user_id=user_id)
-    candidate_profile_data = CandidateProfileRead.model_validate(candidate_profile)
-    return CandidateProfileDetailResponse(
-        message={"success": "Data berhasil diambil"},
-        data=CandidateProfileDetailData(candidate_profile=candidate_profile_data),
+async def get_candidate_profile(db, record_id):
+    record = await service.get_candidate_profile(db, record_id)
+    return item_response(
+        "Candidate profile retrieved",
+        "candidate_profile",
+        CandidateProfileRead.model_validate(record),
     )
 
 
-def update_candidate_profile(
-    db: Session, user_id: int, payload: CandidateProfileUpdate
-) -> CandidateProfileDetailResponse:
-    candidate_profile = candidate_profile_service.update_candidate_profile(
-        db=db, user_id=user_id, payload=payload
-    )
-    candidate_profile_data = CandidateProfileRead.model_validate(candidate_profile)
-    return CandidateProfileDetailResponse(
-        message={"success": "Data berhasil diperbarui"},
-        data=CandidateProfileDetailData(candidate_profile=candidate_profile_data),
+async def create_candidate_profile(db, schema):
+    record = await service.create_candidate_profile(db, schema)
+    return item_response(
+        "Candidate profile created",
+        "candidate_profile",
+        CandidateProfileRead.model_validate(record),
     )
 
 
-def list_candidate_profiles(
-    db: Session,
-    offset: int,
-    limit: int,
-    city: str | None = None,
-    province: str | None = None,
-    preferred_employment_type: schema.EmploymentPreference | None = None,
-    preferred_work_mode: schema.WorkPreference | None = None,
-    profile_visibility: schema.ProfileVisibility | None = None,
-) -> CandidateProfileListResponse:
-    records, total = candidate_profile_service.list_candidate_profiles(
-        db=db,
-        offset=offset,
-        limit=limit,
-        city=city,
-        province=province,
-        preferred_employment_type=preferred_employment_type,
-        preferred_work_mode=preferred_work_mode,
-        profile_visibility=profile_visibility,
-    )
-    items = [CandidateProfileRead.model_validate(record) for record in records]
-    return CandidateProfileListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=CandidateProfileListData(
-            candidate_profiles=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
+async def update_candidate_profile(db, record_id, schema):
+    record = await service.update_candidate_profile(db, record_id, schema)
+    return item_response(
+        "Candidate profile updated",
+        "candidate_profile",
+        CandidateProfileRead.model_validate(record),
     )
 
 
-def delete_candidate_profile(db: Session, user_id: int) -> EmptyResponse:
-    candidate_profile_service.delete_candidate_profile(db=db, user_id=user_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_candidate_profile(db, record_id):
+    await service.delete_candidate_profile(db, record_id)
+    return empty_response("Candidate profile deleted")

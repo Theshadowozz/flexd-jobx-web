@@ -1,11 +1,17 @@
 import { z } from 'zod'
 
-export const apiErrorSchema = z.record(z.string(), z.record(z.string(), z.string()))
+export const paginationSchema = z.object({
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+})
+
+export const responseSchema = z.object({
+  message: z.record(z.string(), z.string()),
+  error: z.record(z.string(), z.string()),
+  data: z.record(z.string(), z.unknown()),
+})
 
 export function apiResponseSchema<T extends z.ZodType>(data: T) {
-  return z.object({
-    message: z.record(z.string(), z.string()),
-    error: apiErrorSchema,
-    data,
-  })
+  return responseSchema.extend({ data })
 }

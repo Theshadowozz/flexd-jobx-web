@@ -1,53 +1,41 @@
-"""Explicit operator command. Never runs at application startup."""
+"""Explicit operator command; never invoked at startup."""
 
-import argparse
-import getpass
-import ssl
+import asyncio
+from getpass import getpass
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from app.configs.settings import get_settings
+from app.configs.database import get_session_factory
 from app.models.user import User
 from app.schemas.user import UserCreate
 from app.services.user_service import create_user
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Provision first JobX administrator")
-    parser.add_argument("--email", required=True)
-    parser.add_argument("--name", required=True)
-    args = parser.parse_args()
-    password = getpass.getpass("Admin password (minimum 12 characters): ")
-    if password != getpass.getpass("Repeat password: "):
-        parser.error("Passwords do not match")
-    payload = UserCreate(name=args.name, email=args.email, password=password, account_type="admin")
-    settings = get_settings()
-    transport = (
-        {"ssl_disabled": True}
-        if settings.db_ssl_disabled
-        else {
-            "ssl": ssl.create_default_context(
-                cafile=str(settings.db_ssl_ca) if settings.db_ssl_ca else None
-            )
-        }
+async def provision():
+    schema = UserCreate(
+        name=input("Admin name: "),
+        email=input("Admin email: "),
+        password=getpass("Admin password (12+ characters): "),
+        account_type="admin",
     )
-    print(f"Target database: {settings.db_host}:{settings.db_port}/{settings.db_name}")
-    if (
-        input("This command writes an admin account. Type CREATE ADMIN to proceed: ")
-        != "CREATE ADMIN"
-    ):
-        parser.exit(message="Cancelled\n")
-    engine = create_engine(settings.database_url, connect_args={**transport, "connect_timeout": 5})
+    if getpass("Confirm password: ") != schema.password:
+        raise SystemExit("Passwords do not match")
+    factory = get_session_factory()
     try:
-        with Session(engine) as db:
-            if db.scalar(select(User.id).where(User.account_type == "admin").limit(1)) is not None:
-                parser.exit(message="Admin already exists; use authenticated account management.\n")
-            user = create_user(db, payload)
-            print(f"Admin created: ID {user.id}")
+        async with factory() as db:
+            existing = await db.scalar(
+                select(User.id).where(User.email == str(schema.email).lower())
+            )
+            if existing is not None:
+                raise SystemExit("Email already exists; no changes made")
+            print("This command creates an active admin in the configured database.")
+            if input("Type CREATE ADMIN to continue: ") != "CREATE ADMIN":
+                raise SystemExit("Cancelled")
+            await create_user(db, schema)
+            print("Admin created")
     finally:
-        engine.dispose()
+        await factory.kw["bind"].dispose()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(provision())

@@ -1,184 +1,193 @@
 # flexd-jobx-web
 
-Monorepo backend FastAPI/MySQL dan frontend React/TypeScript. Dependensi dan proses terpisah.
+Monorepo JobX: portfolio artifacts, evidence-based skills, and job matching.
 
-## Setup backend
+## Scope
 
-Prasyarat: Python 3.11+, uv, MySQL 8 dengan schema existing.
+- Backend: Python 3.11+, uv, FastAPI, SQLAlchemy async, MySQL 8, LangChain + LangGraph.
+- Frontend: React, TypeScript strict, Vite, Tailwind CSS 4, shadcn-style owned components,
+  React Hook Form, Zod, Redux Toolkit.
+- Explicit CRUD for all 12 existing tables; CRUD is restricted to active admins.
+- Authentication: public registration, login, current user, change password. No refresh/logout.
+- Frontend is a scaffold with a local-only validated form, not an auth/CRUD dashboard.
+- OpenAI-compatible LLM factory only; no `LLM_PROVIDER`. Agents and S3 operations are not yet exposed.
 
-1. Salin `backend/.env.example` ke `backend/.env`.
-2. Isi konfigurasi `DB_*` dan `JWT_SECRET_KEY`. Secret JWT minimal 32 byte acak.
-3. Jalankan dari `backend/`:
+## Backend setup
 
-```bash
-uv sync
-uv run uvicorn app.main:app --reload
-```
+Run these steps from `backend/`:
 
-Dokumentasi API: <http://127.0.0.1:8000/docs>.
+1. Copy `.env.example` to `.env` and configure your database credentials.
+2. Generate a JWT secret with `uv run python -c "import secrets; print(secrets.token_hex(32))"`
+   and set `JWT_SECRET_KEY`. Never commit this value.
+3. Run `uv sync --locked`.
+4. Run `uv run uvicorn app.main:app --reload`.
 
-`DB_SSL_DISABLED=true` secara eksplisit menonaktifkan TLS untuk development sesuai keputusan
-proyek. Koneksi tidak terenkripsi; batasi firewall ke IP aplikasi. Untuk TLS tervalidasi, set
-`DB_SSL_DISABLED=false`, dengan `DB_SSL_CA` opsional untuk CA privat.
+API documentation: <http://localhost:8000/docs>. No startup migrations, `create_all`, seeds,
+DB writes, LLM calls, or S3 calls. Application tables must already exist.
 
-Aplikasi tidak membuat atau mengubah schema saat startup. Endpoint health/readiness dihapus.
-Kredensial asli tidak disertakan; `.env` diabaikan Git.
+The development DB connection explicitly disables TLS when `DB_TLS_ENABLED=false`.
+Unencrypted database connections expose traffic to network observers; use a trusted private
+network or SSH tunnel. Enable TLS with certificate validation for production.
 
-## Provisioning admin pertama
+First admin: `uv run python -m scripts.provision_admin`. This is an explicit write command;
+it asks for password confirmation and `CREATE ADMIN` before creating an account. It is never
+run automatically. Existing emails are not overwritten or promoted.
 
-Operator menjalankan dari `backend/`:
+### Environment
 
-```bash
-uv run python -m scripts.provision_admin --email admin@example.com --name Admin
-```
+All application settings use `APP_*`, `DB_*`, `STORAGE_*`, `JWT_*`, or `LLM_*`.
+`APP_CORS_ORIGINS` is a JSON array. See `backend/.env.example` for all settings.
 
-Command meminta password dan konfirmasi target sebelum menulis. Tidak dijalankan otomatis.
-Jika admin sudah ada, gunakan pengelolaan akun terautentikasi. Jangan menjalankan command ini
-pada DB remote tanpa persetujuan operator. Password baru memakai Argon2id; format hash legacy
-yang belum dikenali tidak dapat login sampai tersedia migrasi/reset terkontrol.
+LLM setup: `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_TEMPERATURE`,
+`LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`. Credentials are passed explicitly to `ChatOpenAI`.
+No provider-specific env names are required. Missing LLM/storage credentials do not prevent
+normal CRUD/auth startup; their factories fail only when called without configuration.
 
-## Auth dan CRUD
+`STORAGE_ACL=false` means future uploads should omit ACL entirely; it does not make objects
+public. `STORAGE_PUBLIC_URL` is only a configured URL, not a bucket-policy change.
 
-```text
+### API routes
+
+Prefix: `/api/v1`. Each resource has POST/list GET/detail GET/PATCH/DELETE:
+
+| Table | URL resource | Detail/list response keys |
+| --- | --- | --- |
+| `user` | `/users` | `user` / `users` |
+| `candidate_profile` | `/candidate-profiles` | `candidate_profile` / `candidate_profiles` |
+| `company_profile` | `/company-profiles` | `company_profile` / `company_profiles` |
+| `artifact` | `/artifacts` | `artifact` / `artifacts` |
+| `artifact_analysis` | `/artifact-analyses` | `artifact_analysis` / `artifact_analyses` |
+| `artifact_contribution` | `/artifact-contributions` | `artifact_contribution` / `artifact_contributions` |
+| `artifact_skill_evidence` | `/artifact-skill-evidences` | `artifact_skill_evidence` / `artifact_skill_evidences` |
+| `skill` | `/skills` | `skill` / `skills` |
+| `skill_alias` | `/skill-aliases` | `skill_alias` / `skill_aliases` |
+| `job_post` | `/job-posts` | `job_post` / `job_posts` |
+| `job_skill_requirement` | `/job-skill-requirements` | `job_skill_requirement` / `job_skill_requirements` |
+| `job_match` | `/job-matches` | `job_match` / `job_matches` |
+
+Detail IDs use `id`, except candidate profiles which use `user_id`. List parameters: `limit`
+(1–100, default 20), `offset` (default 0). Lists sort by primary key ascending.
+Ownership foreign keys are immutable on PATCH except `skill_alias.skill_id` and
+`skill.parent_skill_id`; recreate a resource to change its ownership. Unknown fields are rejected.
+
+Auth:
+
+```http
 POST  /api/v1/auth/login
+POST  /api/v1/auth/register
 GET   /api/v1/auth/me
 PATCH /api/v1/auth/password
 ```
 
-Login menerima JSON `email`/`password`; response berisi `data.access_token`, `token_type`,
-`expires_in`, dan `user`. Kirim `Authorization: Bearer <token>` untuk request terproteksi.
-Ganti password menerima `current_password`/`new_password`.
+Register JSON: `{"name":"Budi","email":"budi@example.com","password":"strong-password-123","account_type":"candidate"}`.
+Public registration accepts only `candidate` or `employer`; admin role and client-supplied
+account status are rejected. Accounts are active, without automatic profile creation or
+email verification. HTTP 201 returns only `data.user`; login separately to obtain a token.
+Duplicate emails return HTTP 409. Registration is independently limited by
+`APP_REGISTER_RATE_LIMIT` (default 5) and `APP_REGISTER_WINDOW_SECONDS` (default 60), per IP/process.
 
-CRUD seluruh resource **admin-only**, akun harus aktif:
+Login JSON: `{"email":"admin@example.com","password":"your-password"}`.
+Successful login returns `data.user` and `data.auth` containing `access_token` and
+`token_type`. Protected requests use `Authorization: Bearer <access_token>`.
+Change-password JSON: `{"current_password":"...","new_password":"..."}`.
+New passwords require 12–128 characters and are hashed with Argon2. Unknown legacy password
+hashes fail closed; no guessed compatibility. Passwords are never stripped or logged.
 
-| Resource | Key single | Key list |
-|---|---|---|
-| users | user | users |
-| candidate-profiles | candidate_profile | candidate_profiles |
-| company-profiles | company_profile | company_profiles |
-| skills | skill | skills |
-| skill-aliases | skill_alias | skill_aliases |
-| artifacts | artifact | artifacts |
-| artifact-analyses | artifact_analysis | artifact_analyses |
-| artifact-contributions | artifact_contribution | artifact_contributions |
-| artifact-skill-evidences | artifact_skill_evidence | artifact_skill_evidences |
-| job-posts | job_post | job_posts |
-| job-skill-requirements | job_skill_requirement | job_skill_requirements |
-| job-matches | job_match | job_matches |
+Tokens verify signature, fixed algorithm, issuer, audience, subject, and expiry. Current
+account status/role is checked from DB on every protected request. Password changes do not
+revoke previously issued tokens; they remain valid until expiry. Use short expiry.
+Login limit is per process/IP; configure a shared trusted gateway rate limit for multiple workers.
 
-Setiap resource: `POST`/`GET /api/v1/<resource>` dan `GET`/`PATCH`/`DELETE
-`/api/v1/<resource>/{record_id}`. Profil kandidat memakai `{user_id}`.
-Create `201`; read/update/delete `200`. Pagination `offset=0`, `limit=20`, maksimum 100.
-Filter typed tersedia dalam OpenAPI. Urutan berdasarkan primary key.
+### Response contract
+
+Detail/create/update: only singular resource key.
 
 ```json
 {
-  "message": {"success": "Alias skill berhasil diambil"},
+  "message": {"success": "Skill alias retrieved"},
+  "error": {},
+  "data": {"skill_alias": {"id": "12", "skill_id": "1", "alias_name": "ReactJS", "normalized_alias": "reactjs"}}
+}
+```
+
+List: only plural resource key plus pagination.
+
+```json
+{
+  "message": {"success": "Skill aliases retrieved"},
   "error": {},
   "data": {
-    "skill_alias": {"id": 10, "skill_id": 1, "alias_name": "ReactJS", "normalized_alias": "reactjs"}
+    "skill_aliases": [],
+    "pagination": {"total": 0, "limit": 20, "offset": 0}
   }
 }
 ```
 
-List memakai key jamak dan `data.pagination` berisi `offset`, `limit`, `total`.
-Delete sukses memakai `data: {}`.
+Delete returns HTTP 200 with `data: {}`. Errors keep the envelope with `data: {}` and
+attribute/entity descriptions under `error`. HTTP codes: 201 create, 401 auth, 403 role,
+404 missing, 409 conflict, 422 validation, 429 login limit, 500 internal.
+BIGINT IDs/amounts and DECIMAL values are JSON strings to avoid JavaScript precision loss.
+Send large integer input as a string too. Datetime fields use UTC by application convention;
+existing MySQL DATETIME columns have no timezone information.
 
-```json
-{
-  "message": {"error": "Validasi gagal"},
-  "error": {"validation": {"alias_name": "Field wajib diisi"}},
-  "data": {}
-}
+FastAPI's `/docs`, `/openapi.json`, redirects, and protocol-level responses such as CORS
+preflight retain framework-native formats; the envelope applies to application API responses.
+
+### Domain safeguards
+
+- Last active admin cannot be removed, deactivated, or demoted.
+- Candidate/company/job owners must have the appropriate account role.
+- Parent skill changes reject cycles and lock the hierarchy during writes.
+- Artifact requires source URL or storage key; project dates must be ordered.
+- Evidence analysis must belong to the same artifact.
+- Salary ranges, scores, precision, enums, required fields, and foreign keys are validated.
+- Published jobs require approval; match status must agree with both decisions.
+- Database CASCADE/RESTRICT/SET NULL behavior is preserved. Admin DELETE can cascade;
+  review affected data before calling it. No soft-delete columns are invented.
+- `normalized_alias` is trimmed/lowercased by the server, not accepted from client input.
+
+## Frontend setup
+
+Node.js 22.12+ (22.x), 24.x, or 26+ is required by current test tooling.
+From `frontend/`: copy `.env.example` to `.env`, run `npm ci`, then `npm run dev`.
+Only `APP_PUBLIC_*` is exposed to browser code. Never put DB, AWS, JWT, or LLM secrets in
+frontend env. API client validates envelopes and accepts a token explicitly; it does not
+persist tokens in localStorage. Configure SPA fallback to `index.html` on deployment.
+
+## Checks
+
+Backend, from `backend/`:
+
+```sh
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q
 ```
 
-Error kategori: `bad_request` (400), `authentication` (401), `authorization` (403),
-`not_found` (404), `method_not_allowed` (405), `conflict`/`business_rule` (409),
-`validation` (422), `rate_limit` (429), `internal` (500), `service_unavailable` (503).
-Handler HTTP juga mengenali 413/415/502/504. Format custom JobX, bukan RFC 9457.
-SQL, input sensitif, dan stack trace tidak dikirim ke client.
+Portable SQLite tests exercise all 60 CRUD operations, authentication, role restrictions,
+response envelopes, and domain checks. They do not prove MySQL collation, unsigned bounds,
+row locking/concurrency, or server timestamp behavior.
 
-PATCH menolak body kosong dan field asing. Hanya field terkirim diubah. Field relasi utama,
-primary key, dan timestamp server tidak dapat dipindahkan lewat PATCH. Null untuk kolom wajib
-ditolak oleh service. Field JSON diganti seluruhnya; null mengosongkan kolom nullable.
+MySQL integration is opt-in: precreate matching tables in a dedicated local `*_test` schema,
+set `DB_TEST_URL=mysql+asyncmy://...@127.0.0.1/jobx_test`, and run
+`uv run pytest tests/test_mysql_integration.py -q`. The test rejects nonlocal hosts and
+schemas without `_test`, uses an outer rollback, and does not create/drop application tables.
 
-ID tetap angka JSON. Nilai di atas `Number.MAX_SAFE_INTEGER` memerlukan parser lossless pada
-client JavaScript; migrasi kontrak ID ke string belum diterapkan. Decimal diserialisasi string.
-Timestamp DB berupa DATETIME tanpa zona; timestamp tindakan baru menggunakan UTC tanpa offset.
-Zona data legacy belum diverifikasi.
+Frontend, from `frontend/`:
 
-## Aturan dan batas keamanan
-
-- Password hash tidak masuk response. Role/status hanya admin. Admin aktif terakhir dilindungi.
-- Role profil/pemilik lowongan/kandidat matching diperiksa.
-- Skill parent tidak boleh siklik; evidence harus memakai analysis dari artifact yang sama.
-- Rentang gaji/tanggal diperiksa terhadap keadaan akhir PATCH.
-- Publish mensyaratkan approval approved. Status matching diturunkan dari keputusan pihak terkait;
-  expired tetap tindakan eksplisit. Tidak ada scheduler penutupan/expiry.
-- Delete permanen mengikuti FK existing. Artifact menghapus analysis/contribution/evidence;
-  lowongan menghapus requirement/match. User pemilik lowongan dan skill yang dipakai requirement/
-  evidence dapat ditolak dihapus. Penghapusan DB tidak menghapus object S3.
-- Login rate limit 10 request/menit/IP **per proses**. Deployment beberapa worker memerlukan
-  pembatasan bersama di gateway. Jangan mempercayai forwarded client IP dari proxy tak tepercaya.
-- JWT memvalidasi signature, algorithm, issuer, audience, subject, iat, exp. Akun inactive ditolak.
-- Password change tidak mencabut token existing. Tidak ada refresh token/revocation/logout palsu.
-- Output analysis mentah hanya tersedia melalui CRUD admin; jangan membuka endpoint ini ke publik.
-
-## Arsitektur backend
-
-`routes` mendaftarkan HTTP dan izin; `controllers` membentuk response; `services` menjalankan
-query/transaksi/aturan; `models` mapping tabel; `schemas` whitelist input/output.
-Dependency akses di `configs/dependencies.py`; handler exception di `utils/exceptions.py`.
-Query, transaksi, dan validasi berada langsung di service masing-masing resource.
-Pembentukan response berada di controller; registrasi endpoint berada di route masing-masing.
-Route memakai decorator dan `Depends`, `Path`, serta `Query` langsung, tanpa `Annotated`.
-Setiap service/controller memiliki fungsi bernama entity: create, list, get, update, delete.
-Create dan update mempunyai implementasi terpisah, assignment field eksplisit, serta transaksi
-masing-masing. Tidak memakai `_write`, introspeksi kolom, atau loop `setattr` untuk CRUD.
-Tidak ada repository layer atau SQL dinamis dari nama tabel client.
-
-## Frontend
-
-Prasyarat Node.js 22.12+; jalankan dari `frontend/`:
-
-```bash
-npm ci
-npm run dev
-```
-
-Frontend mempertahankan React, Redux Toolkit, Tailwind, shadcn/ui, react-hook-form, dan Zod.
-Form health dihapus. Home hanya placeholder; UI login/admin belum dibuat.
-API client umum di `src/lib/api.ts` membaca error berkategori.
-Development proxy `/api` ke backend. `VITE_APP_API_BASE_URL` opsional dan publik; jangan isi secret.
-
-## Pengujian
-
-Dari `backend/`:
-
-```bash
-uv run python -m unittest discover -s tests -v
-uv run ruff check app tests scripts
-```
-
-Functional test memakai SQLite in-memory, bukan DB remote. Test mencakup CRUD 12 resource,
-auth, whitelist field, validasi relasi/status, rollback, serta response.
-SQLite tidak membuktikan collation, unsigned bigint, row locking, atau timestamp MySQL.
-
-Test MySQL opt-in melalui `DB_TEST_URL` dengan driver `mysql+pymysql`, schema terpisah berakhiran
-`_test`, dan schema sudah disiapkan operator. Test menolak host aplikasi remote dan tidak
-menjalankan DDL; perubahan dibungkus transaksi rollback. Test MySQL saat ini mencakup skill/alias;
-pengujian lengkap 12 tabel dan concurrency MySQL masih perlu dilengkapi/diverifikasi.
-
-Dari `frontend/`:
-
-```bash
-npm test
+```sh
 npm run lint
+npm run test
 npm run build
 ```
 
-## Di luar cakupan
+## Layout
 
-Upload/delete S3, fetch URL, workflow LLM, perhitungan matching, audit log persisten,
-akses ownership candidate/employer, dan UI pengelolaan belum dibuat. LangChain/LangGraph tetap
-terpasang. Integrasi model direncanakan satu OpenAI-compatible, tanpa pilihan provider.
+Backend flow: routes (HTTP/dependencies), controllers (response), services
+(queries/transactions/rules), models (ORM), schemas (input/output). Shared config and utilities
+contain no dynamic client-selected table/column SQL. `agents/` is reserved for later workflows.
+Frontend folders: assets, components, hooks, lib, schemas, pages, types, redux.
+
+Dependency note: frontend overrides the ESLint parser's transitive `minimatch` to patched
+11.x because its declared 9.x range is affected by GHSA-g3hv-75wg-m249. Remove the override
+after typescript-eslint adopts a patched range. Lint, tests, and build are checked with it.

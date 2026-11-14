@@ -1,16 +1,30 @@
-from collections.abc import Iterator
+import ssl
+from functools import lru_cache
 
-from fastapi import Request
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.utils.database_errors import translate_database_error
+from app.configs.settings import get_settings
 
 
-def get_db(request: Request) -> Iterator[Session]:
-    with Session(request.app.state.engine) as session:
+@lru_cache
+def get_session_factory():
+    settings = get_settings()
+    engine = create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        echo=False,
+        connect_args={
+            "connect_timeout": settings.db_connect_timeout_seconds,
+            "ssl": ssl.create_default_context() if settings.db_tls_enabled else False,
+        },
+    )
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def get_db():
+    async with get_session_factory()() as db:
         try:
-            yield session
-        except DBAPIError as exc:
-            session.rollback()
-            translate_database_error(exc, "database")
+            yield db
+        finally:
+            await db.rollback()

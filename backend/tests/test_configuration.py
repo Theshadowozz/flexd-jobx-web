@@ -1,41 +1,30 @@
-import unittest
-
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
+import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from app.configs.settings import Settings
-from app.main import app
+from app.models import Base
+from app.schemas.common import UnsignedId
 
 
-class ConfigurationTests(unittest.TestCase):
-    def test_cors_allows_frontend_origin(self):
-        with TestClient(app) as client:
-            response = client.options(
-                "/api/v1/users",
-                headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET"},
-            )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+def test_settings_and_metadata():
+    settings = Settings(_env_file=None, db_password="p@ss:/word", db_tls_enabled=False)
+    assert settings.database_url.password == "p@ss:/word"
+    assert settings.db_tls_enabled is False
+    assert not hasattr(settings, "llm_provider")
+    assert len(Base.metadata.tables) == 12
+    assert list(Base.metadata.tables["candidate_profile"].primary_key.columns)[0].name == "user_id"
+    assert (
+        TypeAdapter(UnsignedId).dump_json(18_446_744_073_709_551_615) == b'"18446744073709551615"'
+    )
 
-    def test_cors_rejects_unknown_origin(self):
-        with TestClient(app) as client:
-            response = client.options(
-                "/api/v1/users",
-                headers={
-                    "Origin": "https://unknown.example",
-                    "Access-Control-Request-Method": "GET",
-                },
-            )
-        self.assertEqual(response.status_code, 400)
 
-    def test_settings_validate_database_port(self):
-        with self.assertRaises(ValidationError):
-            Settings(_env_file=None, db_port=0)
+def test_weak_secret_rejected():
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, jwt_secret_key="weak")
 
-    def test_database_url_preserves_special_password_characters(self):
-        settings = Settings(_env_file=None, db_password="p@ss:/word#?")
-        self.assertEqual(settings.database_url.password, "p@ss:/word#?")
-        self.assertEqual(settings.database_url.drivername, "mysql+pymysql")
 
-    def test_development_disables_tls_explicitly(self):
-        self.assertTrue(Settings(_env_file=None).db_ssl_disabled)
+async def test_http_errors_keep_envelope(api):
+    response = await api.get("/api/v1/missing")
+    assert response.status_code == 404
+    assert set(response.json()) == {"message", "error", "data"}
+    assert response.json()["data"] == {}

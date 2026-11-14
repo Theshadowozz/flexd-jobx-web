@@ -1,58 +1,57 @@
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field
 
-from app.schemas.common import Input, Patch, Read, Timestamps
-from app.schemas.response import ApiResponse, Pagination
+from app.schemas.common import Input, Patch, Timestamps, UnsignedId
 
 ArtifactType = Literal[
     "github_repository", "document", "spreadsheet", "image", "video", "design_link", "other"
 ]
 Visibility = Literal["private", "unlisted", "matching_employers", "public"]
-ProcessingStatus = Literal[
-    "not_started", "queued", "processing", "completed", "failed", "needs_review"
-]
+Processing = Literal["not_started", "queued", "processing", "completed", "failed", "needs_review"]
 
 
-class ArtifactFields(Input):
+class ArtifactCreate(Input):
+    owner_user_id: UnsignedId
     title: str = Field(min_length=1, max_length=200)
     artifact_type: ArtifactType
-    description: str | None = Field(default=None, max_length=16000)
-    source_url: str | None = Field(default=None, min_length=1, max_length=1000)
-    storage_key: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = None
+    source_url: str | None = Field(default=None, max_length=1000)
+    storage_key: str | None = Field(default=None, max_length=500)
     mime_type: str | None = Field(default=None, max_length=150)
     visibility: Visibility = "matching_employers"
     project_started_at: date | None = None
     project_completed_at: date | None = None
-    processing_status: ProcessingStatus = "not_started"
-    metadata: JsonValue = None
+    processing_status: Processing = "not_started"
+    metadata: dict[str, Any] | None = None
 
 
-class ArtifactCreate(ArtifactFields):
-    owner_user_id: int = Field(gt=0, le=18446744073709551615)
-
-
-class ArtifactUpdate(ArtifactFields, Patch):
+class ArtifactUpdate(Patch):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     artifact_type: ArtifactType | None = None
+    description: str | None = None
+    source_url: str | None = Field(default=None, max_length=1000)
+    storage_key: str | None = Field(default=None, max_length=500)
+    mime_type: str | None = Field(default=None, max_length=150)
+    visibility: Visibility | None = None
+    project_started_at: date | None = None
+    project_completed_at: date | None = None
+    processing_status: Processing | None = None
+    metadata: dict[str, Any] | None = None
 
 
-class ArtifactRead(ArtifactFields, Timestamps):
-    model_config = {"from_attributes": True}
-    id: int
-    owner_user_id: int
-    metadata: JsonValue = Field(validation_alias="metadata_json")
-
-
-class ArtifactDetailData(Read):
-    artifact: ArtifactRead
-
-
-class ArtifactListData(Read):
-    artifacts: list[ArtifactRead]
-    pagination: Pagination
-
-
-ArtifactDetailResponse = ApiResponse[ArtifactDetailData]
-ArtifactListResponse = ApiResponse[ArtifactListData]
+class ArtifactRead(Timestamps):
+    id: UnsignedId
+    owner_user_id: UnsignedId
+    title: str
+    artifact_type: str
+    description: str | None
+    source_url: str | None
+    storage_key: str | None
+    mime_type: str | None
+    visibility: str
+    project_started_at: date | None
+    project_completed_at: date | None
+    processing_status: str
+    metadata: dict[str, Any] | None = Field(validation_alias="metadata_json")

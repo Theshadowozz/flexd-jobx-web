@@ -1,49 +1,48 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field
 
-from app.schemas.common import Input, Patch, Read
-from app.schemas.response import ApiResponse, Pagination
+from app.schemas.common import Input, Patch, Read, UnsignedId
 
 AnalysisStatus = Literal["queued", "processing", "completed", "failed", "needs_human_review"]
 
 
-class ArtifactAnalysisFields(Input):
+class ArtifactAnalysisCreate(Input):
+    artifact_id: UnsignedId
     analysis_status: AnalysisStatus = "queued"
+    model_provider: str | None = Field(default="openai-compatible", max_length=80)
+    model_name: str | None = Field(default=None, max_length=120)
+    prompt_version: str | None = Field(default=None, max_length=80)
+    extracted_summary: str | None = None
+    raw_result: dict[str, Any] | None = None
+    error_message: str | None = None
+    reviewed_by_user_id: UnsignedId | None = None
+    reviewed_at: datetime | None = None
+
+
+class ArtifactAnalysisUpdate(Patch):
+    analysis_status: AnalysisStatus | None = None
     model_provider: str | None = Field(default=None, max_length=80)
     model_name: str | None = Field(default=None, max_length=120)
     prompt_version: str | None = Field(default=None, max_length=80)
-    extracted_summary: str | None = Field(default=None, max_length=16000)
-    raw_result: JsonValue = None
-    error_message: str | None = Field(default=None, max_length=16000)
-    reviewed_by_user_id: int | None = Field(default=None, gt=0, le=18446744073709551615)
+    extracted_summary: str | None = None
+    raw_result: dict[str, Any] | None = None
+    error_message: str | None = None
+    reviewed_by_user_id: UnsignedId | None = None
+    reviewed_at: datetime | None = None
 
 
-class ArtifactAnalysisCreate(ArtifactAnalysisFields):
-    artifact_id: int = Field(gt=0, le=18446744073709551615)
-
-
-class ArtifactAnalysisUpdate(ArtifactAnalysisFields, Patch):
-    pass
-
-
-class ArtifactAnalysisRead(ArtifactAnalysisFields, Read):
-    model_config = {"from_attributes": True}
-    id: int
-    artifact_id: int
+class ArtifactAnalysisRead(Read):
+    id: UnsignedId
+    artifact_id: UnsignedId
+    analysis_status: str
+    model_provider: str | None
+    model_name: str | None
+    prompt_version: str | None
+    extracted_summary: str | None
+    raw_result: dict[str, Any] | None
+    error_message: str | None
+    reviewed_by_user_id: UnsignedId | None
     reviewed_at: datetime | None
     created_at: datetime
-
-
-class ArtifactAnalysisDetailData(Read):
-    artifact_analysis: ArtifactAnalysisRead
-
-
-class ArtifactAnalysisListData(Read):
-    artifact_analyses: list[ArtifactAnalysisRead]
-    pagination: Pagination
-
-
-ArtifactAnalysisDetailResponse = ApiResponse[ArtifactAnalysisDetailData]
-ArtifactAnalysisListResponse = ApiResponse[ArtifactAnalysisListData]

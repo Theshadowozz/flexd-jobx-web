@@ -1,284 +1,100 @@
-from typing import Literal
-
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.artifact import Artifact
-from app.models.artifact_contribution import ArtifactContribution
-from app.models.user import User
+from app.models import Artifact, ArtifactContribution, User
 from app.schemas.artifact_contribution import ArtifactContributionCreate, ArtifactContributionUpdate
+from app.services.validation import reject_nulls, require_reference
 from app.utils.database_errors import translate_database_error
 from app.utils.exceptions import AppError
 
 
-def get_artifact_contribution(db: Session, artifact_contribution_id: int) -> ArtifactContribution:
-    statement = select(ArtifactContribution).where(
-        ArtifactContribution.id == artifact_contribution_id
+async def list_artifact_contributions(db: AsyncSession, limit: int, offset: int):
+    records = await db.scalars(
+        select(ArtifactContribution).order_by(ArtifactContribution.id).limit(limit).offset(offset)
     )
-    artifact_contribution = db.scalar(statement)
-    if artifact_contribution is None:
+    return list(records), await db.scalar(select(func.count()).select_from(ArtifactContribution))
+
+
+async def get_artifact_contribution(db: AsyncSession, record_id: int):
+    record = await db.get(ArtifactContribution, record_id)
+    if record is None:
         raise AppError(
-            status_code=404,
-            category="not_found",
-            errors={"artifact_contribution": "Data tidak ditemukan"},
+            404,
+            "Artifact contribution not found",
+            {"artifact_contribution": "Record does not exist"},
         )
-    return artifact_contribution
+    return record
 
 
-def list_artifact_contributions(
-    db: Session,
-    offset: int,
-    limit: int,
-    artifact_id: int | None = None,
-    contributor_user_id: int | None = None,
-    claim_status: Literal["self_declared", "peer_confirmed", "organization_confirmed"]
-    | None = None,
-) -> tuple[list[ArtifactContribution], int]:
-    conditions = []
-    if artifact_id is not None:
-        conditions.append(ArtifactContribution.artifact_id == artifact_id)
-    if contributor_user_id is not None:
-        conditions.append(ArtifactContribution.contributor_user_id == contributor_user_id)
-    if claim_status is not None:
-        conditions.append(ArtifactContribution.claim_status == claim_status)
-    total_statement = select(func.count()).select_from(ArtifactContribution).where(*conditions)
-    total = db.scalar(total_statement) or 0
-    statement = (
-        select(ArtifactContribution)
-        .where(*conditions)
-        .order_by(ArtifactContribution.id)
-        .offset(offset)
-        .limit(limit)
-    )
-    records = list(db.scalars(statement).all())
-    return (records, total)
-
-
-def create_artifact_contribution(
-    db: Session, payload: ArtifactContributionCreate
-) -> ArtifactContribution:
+async def create_artifact_contribution(db: AsyncSession, schema: ArtifactContributionCreate):
     try:
-        record = None
-        values = {
-            "role_title": payload.role_title,
-            "contribution_description": payload.contribution_description,
-            "contribution_share_percent": payload.contribution_share_percent,
-            "claim_status": payload.claim_status,
-            "artifact_id": payload.artifact_id,
-            "contributor_user_id": payload.contributor_user_id,
-        }
-        payload.model_dump()
-        if values["artifact_id"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"artifact_id": "Field tidak boleh null"},
-            )
-        if values["artifact_id"] is not None:
-            referenced_artifact_id = db.scalar(
-                select(Artifact)
-                .where(Artifact.id == values["artifact_id"])
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
-            )
-            if referenced_artifact_id is None:
-                raise AppError(
-                    status_code=422,
-                    category="validation",
-                    message="Validasi gagal",
-                    errors={"artifact_id": "Referensi tidak ditemukan"},
-                )
-        if values["contributor_user_id"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"contributor_user_id": "Field tidak boleh null"},
-            )
-        if values["contributor_user_id"] is not None:
-            referenced_contributor_user_id = db.scalar(
-                select(User)
-                .where(User.id == values["contributor_user_id"])
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
-            )
-            if referenced_contributor_user_id is None:
-                raise AppError(
-                    status_code=422,
-                    category="validation",
-                    message="Validasi gagal",
-                    errors={"contributor_user_id": "Referensi tidak ditemukan"},
-                )
-        if values["contribution_description"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"contribution_description": "Field tidak boleh null"},
-            )
-        if values["claim_status"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"claim_status": "Field tidak boleh null"},
-            )
-        record = ArtifactContribution(
-            role_title=values["role_title"],
-            contribution_description=values["contribution_description"],
-            contribution_share_percent=values["contribution_share_percent"],
-            claim_status=values["claim_status"],
-            artifact_id=values["artifact_id"],
-            contributor_user_id=values["contributor_user_id"],
-        )
+        await require_reference(db, Artifact, schema.artifact_id, "artifact_id")
+        await require_reference(db, User, schema.contributor_user_id, "contributor_user_id")
+        record = ArtifactContribution(**schema.model_dump())
         db.add(record)
-        db.flush()
-        db.refresh(record)
-        db.commit()
+        await db.flush()
+        await db.refresh(record)
+        await db.commit()
         return record
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "artifact_contribution")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "artifact_contribution") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
 
-def update_artifact_contribution(
-    db: Session, artifact_contribution_id: int, payload: ArtifactContributionUpdate
-) -> ArtifactContribution:
+async def update_artifact_contribution(
+    db: AsyncSession, record_id: int, schema: ArtifactContributionUpdate
+):
     try:
-        statement = (
+        record = await db.scalar(
             select(ArtifactContribution)
-            .where(ArtifactContribution.id == artifact_contribution_id)
+            .where(ArtifactContribution.id == record_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        record = db.scalar(statement)
         if record is None:
             raise AppError(
-                status_code=404,
-                category="not_found",
-                errors={"artifact_contribution": "Data tidak ditemukan"},
+                404,
+                "Artifact contribution not found",
+                {"artifact_contribution": "Record does not exist"},
             )
-        values = {
-            "role_title": payload.role_title
-            if "role_title" in payload.model_fields_set
-            else record.role_title,
-            "contribution_description": payload.contribution_description
-            if "contribution_description" in payload.model_fields_set
-            else record.contribution_description,
-            "contribution_share_percent": payload.contribution_share_percent
-            if "contribution_share_percent" in payload.model_fields_set
-            else record.contribution_share_percent,
-            "claim_status": payload.claim_status
-            if "claim_status" in payload.model_fields_set
-            else record.claim_status,
-            "artifact_id": record.artifact_id,
-            "contributor_user_id": record.contributor_user_id,
-        }
-        payload.model_dump(exclude_unset=True)
-        if values["artifact_id"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"artifact_id": "Field tidak boleh null"},
-            )
-        if values["artifact_id"] is not None:
-            referenced_artifact_id = db.scalar(
-                select(Artifact)
-                .where(Artifact.id == values["artifact_id"])
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
-            )
-            if referenced_artifact_id is None:
-                raise AppError(
-                    status_code=422,
-                    category="validation",
-                    message="Validasi gagal",
-                    errors={"artifact_id": "Referensi tidak ditemukan"},
-                )
-        if values["contributor_user_id"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"contributor_user_id": "Field tidak boleh null"},
-            )
-        if values["contributor_user_id"] is not None:
-            referenced_contributor_user_id = db.scalar(
-                select(User)
-                .where(User.id == values["contributor_user_id"])
-                .with_for_update(read=True)
-                .execution_options(populate_existing=True)
-            )
-            if referenced_contributor_user_id is None:
-                raise AppError(
-                    status_code=422,
-                    category="validation",
-                    message="Validasi gagal",
-                    errors={"contributor_user_id": "Referensi tidak ditemukan"},
-                )
-        if values["contribution_description"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"contribution_description": "Field tidak boleh null"},
-            )
-        if values["claim_status"] is None:
-            raise AppError(
-                status_code=422,
-                category="validation",
-                message="Validasi gagal",
-                errors={"claim_status": "Field tidak boleh null"},
-            )
-        if "role_title" in payload.model_fields_set:
-            record.role_title = values["role_title"]
-        if "contribution_description" in payload.model_fields_set:
-            record.contribution_description = values["contribution_description"]
-        if "contribution_share_percent" in payload.model_fields_set:
-            record.contribution_share_percent = values["contribution_share_percent"]
-        if "claim_status" in payload.model_fields_set:
-            record.claim_status = values["claim_status"]
-        db.flush()
-        db.refresh(record)
-        db.commit()
+        values = schema.model_dump(exclude_unset=True)
+        reject_nulls(values, "contribution_description", "claim_status")
+        for field, value in values.items():
+            setattr(record, field, value)
+        await db.flush()
+        await db.refresh(record)
+        await db.commit()
         return record
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "artifact_contribution")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "artifact_contribution") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise
 
 
-def delete_artifact_contribution(db: Session, artifact_contribution_id: int) -> None:
+async def delete_artifact_contribution(db: AsyncSession, record_id: int):
     try:
-        statement = (
+        record = await db.scalar(
             select(ArtifactContribution)
-            .where(ArtifactContribution.id == artifact_contribution_id)
+            .where(ArtifactContribution.id == record_id)
             .with_for_update()
-            .execution_options(populate_existing=True)
         )
-        record = db.scalar(statement)
         if record is None:
             raise AppError(
-                status_code=404,
-                category="not_found",
-                errors={"artifact_contribution": "Data tidak ditemukan"},
+                404,
+                "Artifact contribution not found",
+                {"artifact_contribution": "Record does not exist"},
             )
-        db.delete(record)
-        db.commit()
+        await db.delete(record)
+        await db.commit()
     except DBAPIError as exc:
-        db.rollback()
-        translate_database_error(exc, "artifact_contribution")
-        raise
+        await db.rollback()
+        raise translate_database_error(exc, "artifact_contribution") from exc
     except Exception:
-        db.rollback()
+        await db.rollback()
         raise

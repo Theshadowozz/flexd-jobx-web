@@ -1,45 +1,41 @@
 @import "tailwindcss";
-@import "tw-animate-css";
 
 @theme inline {
-  --font-sans: "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-card-foreground: var(--foreground);
-  --color-popover: var(--card);
-  --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #e7edf5;
-  --color-secondary-foreground: var(--foreground);
-  --color-muted: #e7edf5;
-  --color-muted-foreground: #52627a;
-  --color-accent: #e6edfb;
-  --color-accent-foreground: var(--primary);
-  --color-destructive: #b42318;
-  --color-border: #d5dfeb;
-  --color-input: #bdcadd;
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--border);
   --color-ring: var(--primary);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-destructive: var(--destructive);
 }
 
 :root {
-  font-family: var(--font-sans);
-  color-scheme: light;
-  --background: #eff4f8;
-  --foreground: #172b49;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  color: #20343b;
+  background: #f2f6f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --background: #f2f6f8;
+  --foreground: #20343b;
   --card: #ffffff;
-  --primary: #245bca;
-  --radius: 0.75rem;
+  --primary: #14635c;
+  --primary-foreground: #ffffff;
+  --muted: #e7eef1;
+  --muted-foreground: #526870;
+  --border: #d6e0e4;
+  --destructive: #b42332;
 }
 
-@layer base {
-  * { @apply border-border; }
-  body { @apply m-0 min-w-80 bg-background text-foreground antialiased; }
-  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+.display-title { font-family: "Trebuchet MS", "Segoe UI", sans-serif; font-weight: 700; }
+::selection { background: #b9f2dd; color: #20343b; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

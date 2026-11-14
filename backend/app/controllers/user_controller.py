@@ -1,69 +1,35 @@
-from sqlalchemy.orm import Session
-
-from app.schemas.response import EmptyResponse, Pagination
-from app.schemas.user import (
-    AccountStatus,
-    AccountType,
-    UserCreate,
-    UserDetailData,
-    UserDetailResponse,
-    UserListData,
-    UserListResponse,
-    UserRead,
-    UserUpdate,
-)
-from app.services import user_service
+from app.schemas.user import UserRead
+from app.services import user_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_user(db: Session, payload: UserCreate) -> UserDetailResponse:
-    user = user_service.create_user(db=db, payload=payload)
-    user_data = UserRead.model_validate(user)
-    return UserDetailResponse(
-        message={"success": "Data berhasil dibuat"}, data=UserDetailData(user=user_data)
+async def list_users(db, limit, offset):
+    records, total = await service.list_users(db, limit, offset)
+    return list_response(
+        "Users retrieved",
+        "users",
+        [UserRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_user(db: Session, user_id: int) -> UserDetailResponse:
-    user = user_service.get_user(db=db, user_id=user_id)
-    user_data = UserRead.model_validate(user)
-    return UserDetailResponse(
-        message={"success": "Data berhasil diambil"}, data=UserDetailData(user=user_data)
-    )
+async def get_user(db, record_id):
+    record = await service.get_user(db, record_id)
+    return item_response("User retrieved", "user", UserRead.model_validate(record))
 
 
-def update_user(db: Session, user_id: int, payload: UserUpdate) -> UserDetailResponse:
-    user = user_service.update_user(db=db, user_id=user_id, payload=payload)
-    user_data = UserRead.model_validate(user)
-    return UserDetailResponse(
-        message={"success": "Data berhasil diperbarui"}, data=UserDetailData(user=user_data)
-    )
+async def create_user(db, schema):
+    record = await service.create_user(db, schema)
+    return item_response("User created", "user", UserRead.model_validate(record))
 
 
-def list_users(
-    db: Session,
-    offset: int,
-    limit: int,
-    account_type: AccountType | None = None,
-    account_status: AccountStatus | None = None,
-    search: str | None = None,
-) -> UserListResponse:
-    records, total = user_service.list_users(
-        db=db,
-        offset=offset,
-        limit=limit,
-        account_type=account_type,
-        account_status=account_status,
-        search=search,
-    )
-    items = [UserRead.model_validate(record) for record in records]
-    return UserListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=UserListData(
-            users=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
-    )
+async def update_user(db, record_id, schema):
+    record = await service.update_user(db, record_id, schema)
+    return item_response("User updated", "user", UserRead.model_validate(record))
 
 
-def delete_user(db: Session, user_id: int) -> EmptyResponse:
-    user_service.delete_user(db=db, user_id=user_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_user(db, record_id):
+    await service.delete_user(db, record_id)
+    return empty_response("User deleted")

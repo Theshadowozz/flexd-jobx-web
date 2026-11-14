@@ -1,76 +1,35 @@
-from sqlalchemy.orm import Session
-
-from app.schemas import artifact as schema
-from app.schemas.artifact import (
-    ArtifactCreate,
-    ArtifactDetailData,
-    ArtifactDetailResponse,
-    ArtifactListData,
-    ArtifactListResponse,
-    ArtifactRead,
-    ArtifactUpdate,
-)
-from app.schemas.response import EmptyResponse, Pagination
-from app.services import artifact_service
+from app.schemas.artifact import ArtifactRead
+from app.services import artifact_service as service
+from app.utils.responses import empty_response, item_response, list_response
 
 
-def create_artifact(db: Session, payload: ArtifactCreate) -> ArtifactDetailResponse:
-    artifact = artifact_service.create_artifact(db=db, payload=payload)
-    artifact_data = ArtifactRead.model_validate(artifact)
-    return ArtifactDetailResponse(
-        message={"success": "Data berhasil dibuat"}, data=ArtifactDetailData(artifact=artifact_data)
+async def list_artifacts(db, limit, offset):
+    records, total = await service.list_artifacts(db, limit, offset)
+    return list_response(
+        "Artifacts retrieved",
+        "artifacts",
+        [ArtifactRead.model_validate(r) for r in records],
+        total,
+        limit,
+        offset,
     )
 
 
-def get_artifact(db: Session, artifact_id: int) -> ArtifactDetailResponse:
-    artifact = artifact_service.get_artifact(db=db, artifact_id=artifact_id)
-    artifact_data = ArtifactRead.model_validate(artifact)
-    return ArtifactDetailResponse(
-        message={"success": "Data berhasil diambil"},
-        data=ArtifactDetailData(artifact=artifact_data),
-    )
+async def get_artifact(db, record_id):
+    record = await service.get_artifact(db, record_id)
+    return item_response("Artifact retrieved", "artifact", ArtifactRead.model_validate(record))
 
 
-def update_artifact(
-    db: Session, artifact_id: int, payload: ArtifactUpdate
-) -> ArtifactDetailResponse:
-    artifact = artifact_service.update_artifact(db=db, artifact_id=artifact_id, payload=payload)
-    artifact_data = ArtifactRead.model_validate(artifact)
-    return ArtifactDetailResponse(
-        message={"success": "Data berhasil diperbarui"},
-        data=ArtifactDetailData(artifact=artifact_data),
-    )
+async def create_artifact(db, schema):
+    record = await service.create_artifact(db, schema)
+    return item_response("Artifact created", "artifact", ArtifactRead.model_validate(record))
 
 
-def list_artifacts(
-    db: Session,
-    offset: int,
-    limit: int,
-    owner_user_id: int | None = None,
-    artifact_type: schema.ArtifactType | None = None,
-    visibility: schema.Visibility | None = None,
-    processing_status: schema.ProcessingStatus | None = None,
-    search: str | None = None,
-) -> ArtifactListResponse:
-    records, total = artifact_service.list_artifacts(
-        db=db,
-        offset=offset,
-        limit=limit,
-        owner_user_id=owner_user_id,
-        artifact_type=artifact_type,
-        visibility=visibility,
-        processing_status=processing_status,
-        search=search,
-    )
-    items = [ArtifactRead.model_validate(record) for record in records]
-    return ArtifactListResponse(
-        message={"success": "Daftar data berhasil diambil"},
-        data=ArtifactListData(
-            artifacts=items, pagination=Pagination(offset=offset, limit=limit, total=total)
-        ),
-    )
+async def update_artifact(db, record_id, schema):
+    record = await service.update_artifact(db, record_id, schema)
+    return item_response("Artifact updated", "artifact", ArtifactRead.model_validate(record))
 
 
-def delete_artifact(db: Session, artifact_id: int) -> EmptyResponse:
-    artifact_service.delete_artifact(db=db, artifact_id=artifact_id)
-    return EmptyResponse(message={"success": "Data berhasil dihapus"}, data={})
+async def delete_artifact(db, record_id):
+    await service.delete_artifact(db, record_id)
+    return empty_response("Artifact deleted")
