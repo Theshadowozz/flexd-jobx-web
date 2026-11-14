@@ -1,0 +1,27 @@
+[project]
+name = "flexd-jobx-backend"
+version = "0.1.0"
+description = "FastAPI backend for flexd-jobx-web"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "pydantic-settings>=2.7,<3",
+    "sqlalchemy>=2.0,<3",
+    "pymysql[rsa]>=1.1,<2",
+    "langchain>=1,<2",
+    "langgraph>=1,<2",
+    "pyjwt>=2.10,<3",
+    "argon2-cffi>=23,<26",
+    "email-validator>=2,<3",
+]
+
+[dependency-groups]
+dev = ["httpx>=0.28,<1", "ruff>=0.11,<1"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
